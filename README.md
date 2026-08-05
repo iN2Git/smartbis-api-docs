@@ -6,7 +6,7 @@ Official API documentation for the Smartbis Loyalty Marketing platform.
 
 Access the interactive Swagger documentation:
 
-https://in2git.github.io/smartbis-api-docs/
+https://api.smartbis.com/docs/
 
 ## Features
 
