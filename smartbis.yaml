@@ -1,0 +1,1028 @@
+openapi: 3.0.3
+info:
+  title: Smartbis API v2
+  version: 1.0.0
+  description: |
+    Smartbis API v2 enables external systems to integrate directly with the Smartbis Loyalty Marketing platform,
+    allowing businesses to automate customer engagement, register sales, validate coupons, and interact with the
+    loyalty rewards engine in real time.
+
+    The API is designed for secure server-to-server integrations and uses JSON communication with Bearer Token authentication.
+
+    Base URL
+    https://api.smartbis.com/v2/
+
+    Authentication
+
+    Step 1 — Generate Access Token  
+    POST /v2/auth/token
+
+    Provide your `api_key` and `api_secret` to obtain an `access_token`.
+
+    Step 2 — Use Bearer Token
+
+    Include the token in every request header:
+
+    Authorization: Bearer {access_token}
+
+    Request Format
+
+    • All requests must use `application/json`  
+    • All responses are returned in JSON  
+    • UTF-8 encoding is used throughout the API
+
+    Core Features
+
+    • Customer Management  
+    • Sales Registration (loyalty engine trigger)  
+    • Customer Transaction History and Refunds
+    • Rewards access and inventory management  
+    • Categories management  
+    • Coupon validation
+
+    Typical Integration Flow
+
+    1. Generate an access token  
+    2. Create or locate a customer  
+    3. Register a sale using `sale_amount`  
+    4. Smartbis processes loyalty rewards automatically
+    5. List the customer's transactions to obtain a `transaction_id` when a refund is needed
+    6. Refund the original transaction using its `transaction_id`
+externalDocs:
+  description: Full interactive documentation available in Postman
+  url: https://documenter.getpostman.com/view/3977729/2sBXihoXUJ
+servers:
+  - url: https://api.smartbis.com/v2
+tags:
+  - name: Auth
+  - name: Customers
+  - name: Register Sales
+  - name: Transactions
+  - name: Coupons
+  - name: Categories
+  - name: Vouchers
+paths:
+  /auth/token:
+    post:
+      tags:
+        - Auth
+      summary: Generate Token
+      operationId: postGenerateToken
+      description: Gera o token Bearer e salva automaticamente em {{access_token}}.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                api_key:
+                  type: string
+                  example: '{{api_key}}'
+                api_secret:
+                  type: string
+                  example: '{{api_secret}}'
+              required:
+                - api_key
+                - api_secret
+            example:
+              api_key: '{{api_key}}'
+              api_secret: '{{api_secret}}'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token:
+                        type: string
+                    required:
+                      - access_token
+                required:
+                  - data
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /customers/{customer_id}/transactions:
+    get:
+      tags:
+        - Transactions
+      summary: List Customer Transactions
+      operationId: getCustomerTransactions
+      description: |
+        Returns the customer's paginated transaction history. The `transaction_id` field is the unique identifier
+        of the transaction and must be used when requesting a refund. Only transactions where `refundable` is `true`
+        are eligible for refund.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          description: Smartbis customer identifier.
+          schema:
+            type: integer
+            example: 12345
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+            example: 1
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+            example: 50
+      responses:
+        '200':
+          description: Customer transactions returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /customers:
+    get:
+      tags:
+        - Customers
+      summary: List or filter customers
+      operationId: getListCustomers
+      description: Returns customers with optional pagination or CPF filter.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 1
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 50
+        - name: cpf
+          in: query
+          required: false
+          schema:
+            type: string
+            example: '{{customer_cpf}}'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags:
+        - Customers
+      summary: Create Customer
+      operationId: postCreateCustomer
+      description: |
+        Creates a customer with optional international address fields. `country` uses the ISO 3166-1 alpha-2 format.
+        `city_code` is optional; for Brazilian addresses it represents the IBGE municipality code. Address creation
+        does not depend on an external postal-code lookup.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Test Customer
+                cpf:
+                  type: string
+                  example: '122188736662'
+                phone:
+                  type: string
+                  example: '11993999994'
+                email:
+                  type: string
+                  example: customer@example.com
+                country:
+                  type: string
+                  minLength: 2
+                  maxLength: 2
+                  description: ISO 3166-1 alpha-2 country code.
+                  example: BR
+                postal_code:
+                  type: string
+                  example: 88032-005
+                state:
+                  type: string
+                  example: SC
+                city:
+                  type: string
+                  example: Florianopolis
+                city_code:
+                  type: string
+                  description: Optional administrative city code. For Brazil, use the IBGE municipality code.
+                  example: '4205407'
+                street:
+                  type: string
+                  example: Rodovia Jose Carlos Daux
+                number:
+                  type: string
+                  example: '4150'
+                complement:
+                  type: string
+                  example: Suite 10
+                district:
+                  type: string
+                  example: Saco Grande
+                birth_date:
+                  type: string
+                  example: '1990-01-20'
+                gender:
+                  type: string
+                  example: M
+                password:
+                  type: string
+                  example: '123456'
+              required:
+                - name
+                - phone
+                - password
+            example:
+              name: Test Customer
+              cpf: '122188736662'
+              phone: '11993999994'
+              email: customer@example.com
+              country: BR
+              postal_code: 88032-005
+              state: SC
+              city: Florianopolis
+              city_code: '4205407'
+              street: Rodovia Jose Carlos Daux
+              number: '4150'
+              complement: Suite 10
+              district: Saco Grande
+              birth_date: '1990-01-20'
+              gender: M
+              password: '123456'
+      responses:
+        '201':
+          description: Customer created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCustomerResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sales:
+    post:
+      tags:
+        - Register Sales
+      summary: Register Sale
+      operationId: postRegisterSale
+      description: Registers a new sale. `sale_amount` must be greater than zero. To reverse a sale, list the customer's transactions and use the refund endpoint with the original `transaction_id`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/RegisterSaleByCpf'
+                - $ref: '#/components/schemas/RegisterSaleByCustomerId'
+            examples:
+              byCpf:
+                summary: Register Sale by CPF
+                value:
+                  cpf: '{{customer_cpf}}'
+                  sale_amount: 100.0
+                  description: Sale registered via API
+              byCustomerId:
+                summary: Register Sale by Customer ID
+                value:
+                  customer_id: '{{customer_id}}'
+                  sale_amount: 100.0
+                  description: Sale registered via API
+      responses:
+        '201':
+          description: Sale registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /transactions/{transaction_id}/refund:
+    post:
+      tags:
+        - Transactions
+      summary: Refund Transaction
+      operationId: postRefundTransaction
+      description: |
+        Refunds the full value generated by the original transaction. The refund amount cannot be supplied or changed
+        by the integration. A transaction can only be refunded once, and only transactions returned with
+        `refundable: true` are eligible.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction_id
+          in: path
+          required: true
+          description: Transaction identifier returned by the customer transaction history endpoint.
+          schema:
+            type: integer
+            example: 123456
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundTransactionRequest'
+            example:
+              reason: Customer requested sale cancellation
+      responses:
+        '200':
+          description: Transaction refunded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundTransactionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Transaction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Transaction already refunded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Transaction is not refundable or request validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /coupons:
+    get:
+      tags:
+        - Coupons
+      summary: List Coupons
+      operationId: getListCoupons
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /coupons/{coupon_id}/stock:
+    patch:
+      tags:
+        - Coupons
+      summary: Update Reward Stock
+      operationId: patchUpdateRewardStock
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coupon_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stock:
+                  type: integer
+                  example: 80
+              required:
+                - stock
+            example:
+              stock: 80
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /categories:
+    get:
+      tags:
+        - Categories
+      summary: List Categories
+      operationId: getListCategories
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags:
+        - Categories
+      summary: Create Category
+      operationId: postCreateCategory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                  example: Food & Beverage
+              required:
+                - description
+            example:
+              description: Food & Beverage
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vouchers:
+    get:
+      tags:
+        - Vouchers
+      summary: List Vouchers
+      operationId: getListVouchers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 1
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 50
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vouchers/{voucher_code}/validate:
+    post:
+      tags:
+        - Vouchers
+      summary: Validate Voucher
+      operationId: postValidateVoucher
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voucher_code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+            example: {}
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        errors:
+          type: object
+          additionalProperties: true
+    Customer:
+      type: object
+      properties:
+        customer_id:
+          type: integer
+          example: 12345
+        name:
+          type: string
+          example: Test Customer
+        cpf:
+          type: string
+          example: 123.456.789-01
+        document:
+          type: string
+          example: 123.456.789-01
+        phone:
+          type: string
+          example: '5511993999994'
+        email:
+          type: string
+          example: customer@example.com
+        birthday:
+          type: string
+          example: '1990-01-20'
+        country:
+          type: string
+          description: ISO 3166-1 alpha-2 country code.
+          example: BR
+        postal_code:
+          type: string
+          example: 88032-005
+        state:
+          type: string
+          example: SC
+        city:
+          type: string
+          example: Florianopolis
+        city_code:
+          type: string
+          description: Optional administrative city code. For Brazil, this is the IBGE municipality code.
+          example: '4205407'
+        street:
+          type: string
+          example: Rodovia Jose Carlos Daux
+        number:
+          type: string
+          example: '4150'
+        complement:
+          type: string
+          example: Suite 10
+        district:
+          type: string
+          example: Saco Grande
+        wallet_balance:
+          type: number
+          format: float
+          example: 0
+        active:
+          type: integer
+          enum:
+            - 0
+            - 1
+          example: 1
+        created_at:
+          type: string
+          example: '2026-08-04 14:30:00'
+      required:
+        - customer_id
+        - name
+        - phone
+        - country
+        - postal_code
+        - state
+        - city
+        - city_code
+        - street
+        - number
+        - complement
+        - district
+        - wallet_balance
+        - active
+        - created_at
+    CustomerListResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 1
+            page:
+              type: integer
+              example: 1
+            per_page:
+              type: integer
+              example: 50
+            total_pages:
+              type: integer
+              example: 1
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Customer'
+          required:
+            - total
+            - page
+            - per_page
+            - total_pages
+            - items
+      required:
+        - code
+        - status
+        - data
+    CreateCustomerResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 201
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            result:
+              type: object
+              additionalProperties: true
+            customer:
+              $ref: '#/components/schemas/Customer'
+          required:
+            - result
+            - customer
+        message:
+          type: string
+          example: Customer created successfully
+      required:
+        - code
+        - status
+        - data
+        - message
+    RegisterSaleByCpf:
+      type: object
+      properties:
+        cpf:
+          type: string
+          example: '12345678901'
+        sale_amount:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          description: Sale amount. Must be greater than zero; negative values cannot be used for refunds.
+          example: 100.0
+        description:
+          type: string
+          example: Sale registered via API
+      required:
+        - cpf
+        - sale_amount
+        - description
+    RegisterSaleByCustomerId:
+      type: object
+      properties:
+        customer_id:
+          oneOf:
+            - type: integer
+              example: 12345
+            - type: string
+              example: '{{customer_id}}'
+        sale_amount:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          description: Sale amount. Must be greater than zero; negative values cannot be used for refunds.
+          example: 100.0
+        description:
+          type: string
+          example: Sale registered via API
+      required:
+        - customer_id
+        - sale_amount
+        - description
+    Transaction:
+      type: object
+      properties:
+        transaction_id:
+          type: integer
+          description: Unique transaction identifier corresponding to the transaction record ID.
+          example: 123456
+        customer_id:
+          type: integer
+          example: 12345
+        sale_amount:
+          type: number
+          format: float
+          example: 100.0
+        points_amount:
+          type: number
+          format: float
+          example: 10.0
+        type:
+          type: string
+          example: Credito
+        description:
+          type: string
+          example: Sale registered via API
+        source:
+          type: string
+          example: API
+        store_id:
+          type: integer
+          example: 10
+        store_name:
+          type: string
+          example: Main Store
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-08-04 14:30:00'
+        refunded:
+          type: boolean
+          example: false
+        refundable:
+          type: boolean
+          example: true
+      required:
+        - transaction_id
+        - customer_id
+        - sale_amount
+        - points_amount
+        - type
+        - created_at
+        - refunded
+        - refundable
+    TransactionListResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 1
+            page:
+              type: integer
+              example: 1
+            per_page:
+              type: integer
+              example: 50
+            total_pages:
+              type: integer
+              example: 1
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Transaction'
+          required:
+            - total
+            - page
+            - per_page
+            - total_pages
+            - items
+      required:
+        - code
+        - status
+        - data
+    RefundTransactionRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          maxLength: 100
+          description: Reason for refunding the transaction.
+          example: Customer requested sale cancellation
+      required:
+        - reason
+    RefundTransactionResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            transaction_id:
+              type: integer
+              example: 123456
+            customer_id:
+              type: integer
+              example: 12345
+            refunded_amount:
+              type: number
+              format: float
+              example: 10.0
+            wallet_balance:
+              type: number
+              format: float
+              example: 90.0
+            result:
+              type: object
+              additionalProperties: true
+          required:
+            - transaction_id
+            - customer_id
+            - refunded_amount
+            - wallet_balance
+        message:
+          type: string
+          example: Transaction refunded successfully
+      required:
+        - code
+        - status
+        - data
