@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Smartbis API v2
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Smartbis API v2 enables external systems to integrate directly with the Smartbis Loyalty Marketing platform,
     allowing businesses to automate customer engagement, register sales, validate coupons, and interact with the
@@ -14,12 +14,12 @@ info:
 
     Authentication
 
-    Step 1 — Generate Access Token  
+    Step 1 â€” Generate Access Token  
     POST /v2/auth/token
 
     Provide your `api_key` and `api_secret` to obtain an `access_token`.
 
-    Step 2 — Use Bearer Token
+    Step 2 â€” Use Bearer Token
 
     Include the token in every request header:
 
@@ -27,18 +27,18 @@ info:
 
     Request Format
 
-    • All requests must use `application/json`  
-    • All responses are returned in JSON  
-    • UTF-8 encoding is used throughout the API
+    â€¢ All requests must use `application/json`  
+    â€¢ All responses are returned in JSON  
+    â€¢ UTF-8 encoding is used throughout the API
 
     Core Features
 
-    • Customer Management  
-    • Sales Registration (loyalty engine trigger)  
-    • Customer Transaction History and Refunds
-    • Rewards access and inventory management  
-    • Categories management  
-    • Coupon validation
+    â€¢ Customer Management  
+    â€¢ Sales Registration (loyalty engine trigger)  
+    â€¢ Customer Transaction History and Refunds
+    â€¢ Rewards access and inventory management  
+    â€¢ Categories management  
+    â€¢ Coupon validation
 
     Typical Integration Flow
 
@@ -181,7 +181,7 @@ paths:
         - Customers
       summary: List or filter customers
       operationId: getListCustomers
-      description: Returns customers with optional pagination or CPF filter.
+      description: Returns customers with optional pagination, public document, or phone filter.
       security:
         - bearerAuth: []
       parameters:
@@ -197,12 +197,27 @@ paths:
           schema:
             type: integer
             example: 50
-        - name: cpf
+        - name: customer_id
           in: query
           required: false
+          description: Smartbis internal customer identifier.
+          schema:
+            type: integer
+            example: 12345
+        - name: document
+          in: query
+          required: false
+          description: Public document configured for the customer, such as CPF, CNPJ, passport, DNI, RUT, or NIF.
           schema:
             type: string
-            example: '{{customer_cpf}}'
+            example: '{{customer_document}}'
+        - name: phone
+          in: query
+          required: false
+          description: Customer phone number. It is normalized using the company's country configuration.
+          schema:
+            type: string
+            example: '5511993999994'
       responses:
         '200':
           description: Successful response
@@ -244,9 +259,10 @@ paths:
                 name:
                   type: string
                   example: Test Customer
-                cpf:
+                document:
                   type: string
-                  example: '122188736662'
+                  description: Public document configured by the company, such as CPF, CNPJ, passport, DNI, RUT, or NIF.
+                  example: '529.982.247-25'
                 phone:
                   type: string
                   example: '11993999994'
@@ -299,7 +315,7 @@ paths:
                 - password
             example:
               name: Test Customer
-              cpf: '122188736662'
+              document: '529.982.247-25'
               phone: '11993999994'
               email: customer@example.com
               country: BR
@@ -340,7 +356,11 @@ paths:
         - Register Sales
       summary: Register Sale
       operationId: postRegisterSale
-      description: Registers a new sale. `sale_amount` must be greater than zero. To reverse a sale, list the customer's transactions and use the refund endpoint with the original `transaction_id`.
+      description: |
+        Registers a new sale by `customer_id`, the customer's public `document`, or `phone`. The document type follows the
+        company's customer configuration and may be a CPF, CNPJ, passport, DNI, RUT, NIF, or another configured
+        public document. `sale_amount` must be greater than zero. To reverse a sale, list the customer's transactions
+        and use the refund endpoint with the original `transaction_id`.
       security:
         - bearerAuth: []
       requestBody:
@@ -349,19 +369,38 @@ paths:
           application/json:
             schema:
               oneOf:
-                - $ref: '#/components/schemas/RegisterSaleByCpf'
+                - $ref: '#/components/schemas/RegisterSaleByDocument'
+                - $ref: '#/components/schemas/RegisterSaleByPhone'
                 - $ref: '#/components/schemas/RegisterSaleByCustomerId'
             examples:
-              byCpf:
-                summary: Register Sale by CPF
+              byCpfDocument:
+                summary: Register sale using a CPF document
                 value:
-                  cpf: '{{customer_cpf}}'
+                  document: '529.982.247-25'
+                  sale_amount: 100.0
+                  description: Sale registered via API
+              byCnpjDocument:
+                summary: Register sale using a CNPJ document
+                value:
+                  document: '11.222.333/0001-81'
+                  sale_amount: 100.0
+                  description: Sale registered via API
+              byPassportDocument:
+                summary: Register sale using a passport document
+                value:
+                  document: 'AB123456'
+                  sale_amount: 100.0
+                  description: Sale registered via API
+              byPhone:
+                summary: Register sale using a phone number
+                value:
+                  phone: '5511993999994'
                   sale_amount: 100.0
                   description: Sale registered via API
               byCustomerId:
-                summary: Register Sale by Customer ID
+                summary: Register sale using a customer ID
                 value:
-                  customer_id: '{{customer_id}}'
+                  customer_id: 12345
                   sale_amount: 100.0
                   description: Sale registered via API
       responses:
@@ -703,12 +742,10 @@ components:
         name:
           type: string
           example: Test Customer
-        cpf:
-          type: string
-          example: 123.456.789-01
         document:
           type: string
-          example: 123.456.789-01
+          description: Public document configured by the company, such as CPF, CNPJ, passport, DNI, RUT, or NIF.
+          example: 529.982.247-25
         phone:
           type: string
           example: '5511993999994'
@@ -842,12 +879,13 @@ components:
         - status
         - data
         - message
-    RegisterSaleByCpf:
+    RegisterSaleByDocument:
       type: object
       properties:
-        cpf:
+        document:
           type: string
-          example: '12345678901'
+          description: Public document configured by the company, such as CPF, CNPJ, passport, DNI, RUT, or NIF.
+          example: '529.982.247-25'
         sale_amount:
           type: number
           format: float
@@ -859,7 +897,28 @@ components:
           type: string
           example: Sale registered via API
       required:
-        - cpf
+        - document
+        - sale_amount
+        - description
+    RegisterSaleByPhone:
+      type: object
+      properties:
+        phone:
+          type: string
+          description: Customer phone number. It is normalized using the company's country configuration.
+          example: '5511993999994'
+        sale_amount:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          description: Sale amount. Must be greater than zero; negative values cannot be used for refunds.
+          example: 100.0
+        description:
+          type: string
+          example: Sale registered via API
+      required:
+        - phone
         - sale_amount
         - description
     RegisterSaleByCustomerId:
@@ -870,7 +929,8 @@ components:
             - type: integer
               example: 12345
             - type: string
-              example: '{{customer_id}}'
+              example: '12345'
+          description: Smartbis internal customer identifier.
         sale_amount:
           type: number
           format: float
