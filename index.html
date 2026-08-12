@@ -33,6 +33,21 @@
     content="Official interactive documentation for the Smartbis Loyalty Marketing API."
   />
 
+  <script>
+    (function () {
+      var savedTheme = "";
+      try {
+        savedTheme = localStorage.getItem("smartbis-docs-theme") || "";
+      } catch (error) {}
+      document.documentElement.dataset.theme = savedTheme === "dark" ? "dark" : "light";
+    })();
+  </script>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css"
+  />
+
   <style>
     :root {
       color-scheme: light;
