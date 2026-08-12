@@ -33,21 +33,6 @@
     content="Official interactive documentation for the Smartbis Loyalty Marketing API."
   />
 
-  <script>
-    (function () {
-      var savedTheme = "";
-      try {
-        savedTheme = localStorage.getItem("smartbis-docs-theme") || "";
-      } catch (error) {}
-      document.documentElement.dataset.theme = savedTheme === "dark" ? "dark" : "light";
-    })();
-  </script>
-
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css"
-  />
-
   <style>
     :root {
       color-scheme: light;
@@ -354,6 +339,18 @@
     html[data-theme="dark"] .swagger-ui .response-col_links,
     html[data-theme="dark"] .swagger-ui .model-hint {
       color: var(--muted);
+    }
+
+    html[data-theme="dark"] .swagger-ui .opblock-description-wrapper p,
+    html[data-theme="dark"] .swagger-ui .opblock-external-docs-wrapper p,
+    html[data-theme="dark"] .swagger-ui .opblock-title_normal p,
+    html[data-theme="dark"] .swagger-ui .opblock-section-header h4,
+    html[data-theme="dark"] .swagger-ui .parameters-col_description p,
+    html[data-theme="dark"] .swagger-ui .response-col_description,
+    html[data-theme="dark"] .swagger-ui .responses-inner p,
+    html[data-theme="dark"] .swagger-ui .markdown p,
+    html[data-theme="dark"] .swagger-ui .renderedMarkdown p {
+      color: #d6dee7;
     }
 
     html[data-theme="dark"] .swagger-ui .info a {
