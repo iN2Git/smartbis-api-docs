@@ -210,7 +210,16 @@ paths:
           description: Public document configured for the customer, such as CPF, CNPJ, passport, DNI, RUT, or NIF.
           schema:
             type: string
-            example: '{{customer_document}}'
+          examples:
+            cpf:
+              summary: CPF document
+              value: '529.982.247-25'
+            cnpj:
+              summary: CNPJ document
+              value: '11.222.333/0001-81'
+            passport:
+              summary: Passport document
+              value: 'AB123456'
         - name: phone
           in: query
           required: false
@@ -246,7 +255,8 @@ paths:
       description: |
         Creates a customer with optional international address fields. `country` uses the ISO 3166-1 alpha-2 format.
         `city_code` is optional; for Brazilian addresses it represents the IBGE municipality code. Address creation
-        does not depend on an external postal-code lookup.
+        does not depend on an external postal-code lookup. The `document` type follows the company's customer
+        configuration and may be a CPF, CNPJ, passport, DNI, RUT, NIF, or another configured public document.
       security:
         - bearerAuth: []
       requestBody:
@@ -313,23 +323,34 @@ paths:
                 - name
                 - phone
                 - password
-            example:
-              name: Test Customer
-              document: '529.982.247-25'
-              phone: '11993999994'
-              email: customer@example.com
-              country: BR
-              postal_code: 88032-005
-              state: SC
-              city: Florianopolis
-              city_code: '4205407'
-              street: Rodovia Jose Carlos Daux
-              number: '4150'
-              complement: Suite 10
-              district: Saco Grande
-              birth_date: '1990-01-20'
-              gender: M
-              password: '123456'
+            examples:
+              withCpfDocument:
+                summary: Create a customer using a CPF document
+                value:
+                  name: Test Customer
+                  document: '529.982.247-25'
+                  phone: '11993999994'
+                  email: customer@example.com
+                  country: BR
+                  password: '123456'
+              withCnpjDocument:
+                summary: Create a business customer using a CNPJ document
+                value:
+                  name: Test Coworking Ltda
+                  document: '11.222.333/0001-81'
+                  phone: '11993999994'
+                  email: financeiro@example.com
+                  country: BR
+                  password: '123456'
+              withPassportDocument:
+                summary: Create a customer using a passport document
+                value:
+                  name: International Customer
+                  document: 'AB123456'
+                  phone: '2025550123'
+                  email: international@example.com
+                  country: US
+                  password: '123456'
       responses:
         '201':
           description: Customer created successfully
