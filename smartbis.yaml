@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Smartbis API v2
-  version: 1.1.0
+  version: 1.2.0
   description: |
     Smartbis API v2 enables external systems to integrate directly with the Smartbis Loyalty Marketing platform,
     allowing businesses to automate customer engagement, register sales, validate coupons, and interact with the
@@ -14,12 +14,33 @@ info:
 
     Authentication
 
-    Step 1 â€” Generate Access Token  
-    POST /v2/auth/token
+    Step 1 — Generate Access Token  
+    POST /auth/token
 
     Provide your `api_key` and `api_secret` to obtain an `access_token`.
 
-    Step 2 â€” Use Bearer Token
+    Operator credentials and permissions
+
+    Each API Key identifies one Smartbis user. For operational requests, use the API Key of an operator linked to a
+    store. The operator may authenticate with their own Secret Key or with the administrator's Secret Key. Using the
+    administrator's Secret Key does not grant administrator privileges: authorization always follows the user in the
+    API Key and the same store permissions configured in the Smartbis app.
+
+    • Sales permission: register sales, list related transactions, and refund the operator's own sales
+    • Voucher validation permission: list and validate vouchers for the linked store
+    • Customer registration permission: create customers for the linked store
+    • Customer visibility: according to the store settings, an operator may see all company customers or only
+      customers related to that operator or registered by an authorized store
+
+    Multi-store accounts
+
+    The API derives the store from the authenticated operator's permissions. To process a sale in another store, use
+    the API Key of an operator authorized to register sales in that store and generate a separate Bearer token. The
+    administrator API Key does not select or distribute sales, and `POST /sales` does not accept `store_id` or another
+    override field/header. If an operator is linked to more than one store for the same operation, the API returns
+    `409 Conflict` instead of selecting a store arbitrarily.
+
+    Step 2 — Use Bearer Token
 
     Include the token in every request header:
 
@@ -27,30 +48,38 @@ info:
 
     Request Format
 
-    â€¢ All requests must use `application/json`  
-    â€¢ All responses are returned in JSON  
-    â€¢ UTF-8 encoding is used throughout the API
+    • All requests must use `application/json`  
+    • All responses are returned in JSON  
+    • UTF-8 encoding is used throughout the API
+
+    Error handling
+
+    • `400 Bad Request`: malformed JSON or invalid request body
+    • `401 Unauthorized`: missing, invalid, or expired credentials
+    • `403 Forbidden`: authenticated user without the required permission
+    • `404 Not Found`: resource not found within the user's authorized scope
+    • `409 Conflict`: conflicting state or ambiguous store configuration
+    • `415 Unsupported Media Type`: a request body was not sent as `application/json`
+    • `422 Unprocessable Entity`: field or business-rule validation failed
+    • `500 Internal Server Error`: the operation could not be completed safely
 
     Core Features
 
-    â€¢ Customer Management  
-    â€¢ Sales Registration (loyalty engine trigger)  
-    â€¢ Customer Transaction History and Refunds
-    â€¢ Rewards access and inventory management  
-    â€¢ Categories management  
-    â€¢ Coupon validation
+    • Customer Management  
+    • Sales Registration (loyalty engine trigger)  
+    • Customer Transaction History and Refunds
+    • Rewards access and inventory management  
+    • Categories management  
+    • Voucher validation
 
     Typical Integration Flow
 
-    1. Generate an access token  
+    1. Generate an access token using the API Key of the operator who will perform the request
     2. Create or locate a customer  
     3. Register a sale using `sale_amount`  
     4. Smartbis processes loyalty rewards automatically
     5. List the customer's transactions to obtain a `transaction_id` when a refund is needed
     6. Refund the original transaction using its `transaction_id`
-externalDocs:
-  description: Full interactive documentation available in Postman
-  url: https://documenter.getpostman.com/view/3977729/2sBXihoXUJ
 servers:
   - url: https://api.smartbis.com/v2
 tags:
@@ -68,7 +97,13 @@ paths:
         - Auth
       summary: Generate Token
       operationId: postGenerateToken
-      description: Gera o token Bearer e salva automaticamente em {{access_token}}.
+      description: |
+        Generates a cryptographically signed, opaque Bearer token used by subsequent requests. The API Key determines the authenticated
+        user. An operator may use their own Secret Key or the administrator's Secret Key, but the resulting token
+        keeps the identity and permissions of the operator in the API Key.
+
+        An active operator must have at least one API permission in an active store. For multi-store integrations,
+        generate and keep a separate token for each operator/store context. Tokens expire after 24 hours.
       requestBody:
         required: true
         content:
@@ -96,14 +131,30 @@ paths:
               schema:
                 type: object
                 properties:
+                  code:
+                    type: integer
+                    example: 200
+                  status:
+                    type: string
+                    example: success
                   data:
                     type: object
                     properties:
                       access_token:
                         type: string
+                      token_type:
+                        type: string
+                        example: Bearer
+                      expires_in:
+                        type: integer
+                        example: 86400
                     required:
                       - access_token
+                      - token_type
+                      - expires_in
                 required:
+                  - code
+                  - status
                   - data
         '401':
           description: Unauthorized
@@ -117,7 +168,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-
+        '500':
+          description: Token could not be generated safely.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /customers/{customer_id}/transactions:
     get:
       tags:
@@ -127,7 +183,8 @@ paths:
       description: |
         Returns the customer's paginated transaction history. The `transaction_id` field is the unique identifier
         of the transaction and must be used when requesting a refund. Only transactions where `refundable` is `true`
-        are eligible for refund.
+        are eligible for refund. Operators need permission to register sales and receive only transactions registered by their
+        own operator identity. Administrators can view the company-wide history.
       security:
         - bearerAuth: []
       parameters:
@@ -168,6 +225,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: The authenticated operator does not have permission to register sales.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Customer not found
           content:
@@ -181,7 +244,12 @@ paths:
         - Customers
       summary: List or filter customers
       operationId: getListCustomers
-      description: Returns customers with optional pagination, public document, or phone filter.
+      description: |
+        Returns customers with optional pagination, public document, phone, or customer ID filters. The same
+        visibility rule is applied to lists and direct filters. Depending on the customer visibility setting of an
+        authorized store, the operator may view all company customers. Otherwise, results are limited to customers
+        related to that operator or registered by an authorized store. Both active and inactive customers may be
+        returned; inspect the `active` field before using a customer in an operational flow.
       security:
         - bearerAuth: []
       parameters:
@@ -240,6 +308,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: The authenticated user has no operational store permission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
           content:
@@ -257,6 +331,8 @@ paths:
         `city_code` is optional; for Brazilian addresses it represents the IBGE municipality code. Address creation
         does not depend on an external postal-code lookup. The `document` type follows the company's customer
         configuration and may be a CPF, CNPJ, passport, DNI, RUT, NIF, or another configured public document.
+        Operators must have permission to register customers; the new customer is linked to that operator's
+        authorized store.
       security:
         - bearerAuth: []
       requestBody:
@@ -364,8 +440,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: The operator does not have permission to create customers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Customer already exists, or the operator is linked to more than one store for customer creation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+        '500':
+          description: Customer could not be created safely.
           content:
             application/json:
               schema:
@@ -382,6 +477,12 @@ paths:
         company's customer configuration and may be a CPF, CNPJ, passport, DNI, RUT, NIF, or another configured
         public document. `sale_amount` must be greater than zero. To reverse a sale, list the customer's transactions
         and use the refund endpoint with the original `transaction_id`.
+
+        **Authorization and store selection:** the authenticated operator must have permission to register sales. The sale is
+        processed by the single active store that grants this permission to the operator in the API Key. For another
+        store, use the API Key of an operator authorized there and generate a separate token. The administrator API
+        Key cannot register sales or distribute them among stores. This endpoint does not accept `store_id` or any
+        other request field/header to override the resolved store.
       security:
         - bearerAuth: []
       requestBody:
@@ -430,10 +531,27 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/RegisterSaleResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator API Key used for a sale, or operator without permission to register sales.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The operator is linked to more than one active store for sales.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Customer not found or inactive.
           content:
             application/json:
               schema:
@@ -454,7 +572,8 @@ paths:
       description: |
         Refunds the full value generated by the original transaction. The refund amount cannot be supplied or changed
         by the integration. A transaction can only be refunded once, and only transactions returned with
-        `refundable: true` are eligible.
+        `refundable: true` are eligible. Operators need permission to register sales and can refund only transactions originally
+        registered by their own operator identity in an authorized store.
       security:
         - bearerAuth: []
       parameters:
@@ -486,6 +605,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: The authenticated operator does not have permission to register sales.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Transaction not found
           content:
@@ -511,6 +636,9 @@ paths:
         - Coupons
       summary: List Coupons
       operationId: getListCoupons
+      description: |
+        Lists active rewards from stores where the operator has permission to register sales or validate vouchers.
+        Administrators can list rewards across the company.
       security:
         - bearerAuth: []
       responses:
@@ -523,6 +651,12 @@ paths:
                 additionalProperties: true
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The operator has neither sales nor voucher permission.
           content:
             application/json:
               schema:
@@ -540,6 +674,7 @@ paths:
         - Coupons
       summary: Update Reward Stock
       operationId: patchUpdateRewardStock
+      description: Administrator-only operation.
       security:
         - bearerAuth: []
       parameters:
@@ -547,7 +682,8 @@ paths:
           in: path
           required: true
           schema:
-            type: string
+            type: integer
+            minimum: 1
       requestBody:
         required: true
         content:
@@ -557,6 +693,7 @@ paths:
               properties:
                 stock:
                   type: integer
+                  minimum: 0
                   example: 80
               required:
                 - stock
@@ -576,8 +713,97 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Reward not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+        '500':
+          description: Reward stock could not be updated safely.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags:
+        - Coupons
+      summary: Replace Reward Stock
+      operationId: putUpdateRewardStock
+      description: Administrator-only operation. This method has the same behavior as PATCH for the `stock` field.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coupon_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stock:
+                  type: integer
+                  minimum: 0
+                  example: 80
+              required:
+                - stock
+            example:
+              stock: 80
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Reward not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+        '500':
+          description: Reward stock could not be updated safely.
           content:
             application/json:
               schema:
@@ -589,6 +815,7 @@ paths:
         - Categories
       summary: List Categories
       operationId: getListCategories
+      description: Requires permission to register sales, permission to validate vouchers, or administrator access.
       security:
         - bearerAuth: []
       responses:
@@ -605,6 +832,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: The operator has neither sales nor voucher permission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
           content:
@@ -617,6 +850,7 @@ paths:
         - Categories
       summary: Create Category
       operationId: postCreateCategory
+      description: Administrator-only operation.
       security:
         - bearerAuth: []
       requestBody:
@@ -634,8 +868,8 @@ paths:
             example:
               description: Food & Beverage
       responses:
-        '200':
-          description: Successful response
+        '201':
+          description: Category created successfully
           content:
             application/json:
               schema:
@@ -647,8 +881,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+        '500':
+          description: Category could not be created safely.
           content:
             application/json:
               schema:
@@ -660,6 +907,9 @@ paths:
         - Vouchers
       summary: List Vouchers
       operationId: getListVouchers
+      description: |
+        Requires permission to validate vouchers. Operators receive only vouchers issued by stores where they have that
+        permission. Administrators can list vouchers across the company.
       security:
         - bearerAuth: []
       parameters:
@@ -689,6 +939,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: The operator does not have permission to validate vouchers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
           content:
@@ -702,6 +958,10 @@ paths:
         - Vouchers
       summary: Validate Voucher
       operationId: postValidateVoucher
+      description: |
+        Requires voucher validation permission for the store that issued the voucher. An operator cannot validate their own
+        non-cashback voucher. Reward vouchers and cashback vouchers are supported, subject to their expiration and
+        the store's configured redemption limits. A voucher can be validated only once.
       security:
         - bearerAuth: []
       parameters:
@@ -710,14 +970,6 @@ paths:
           required: true
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties: {}
-            example: {}
       responses:
         '200':
           description: Successful response
@@ -732,8 +984,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing store permission, or the operator attempted to validate their own voucher.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Voucher not found in an authorized store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Voucher already validated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Voucher validation could not be committed.
           content:
             application/json:
               schema:
@@ -744,16 +1020,31 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: opaque
   schemas:
     Error:
       type: object
       properties:
+        code:
+          type: integer
+          example: 403
+        status:
+          type: string
+          example: error
+        data:
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: array
+              items: {}
         message:
           type: string
-        errors:
-          type: object
-          additionalProperties: true
+          example: Forbidden
+      required:
+        - code
+        - status
+        - data
+        - message
     Customer:
       type: object
       properties:
@@ -766,6 +1057,11 @@ components:
         document:
           type: string
           description: Public document configured by the company, such as CPF, CNPJ, passport, DNI, RUT, or NIF.
+          example: 529.982.247-25
+        cpf:
+          type: string
+          deprecated: true
+          description: Legacy alias of `document`, retained for backward compatibility.
           example: 529.982.247-25
         phone:
           type: string
@@ -966,6 +1262,64 @@ components:
         - customer_id
         - sale_amount
         - description
+    RegisterSaleResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 201
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            customer_id:
+              type: integer
+              example: 12345
+            document:
+              type: string
+              example: '529.982.247-25'
+            sale_amount:
+              type: number
+              format: float
+              example: 100.0
+            store_id:
+              type: integer
+              example: 10
+            store_name:
+              type: string
+              example: Main Store
+            operator_id:
+              type: integer
+              example: 149752
+            operator_name:
+              type: string
+              example: Store Operator
+            wallet_balance:
+              type: number
+              format: float
+              example: 110.0
+            result:
+              type: object
+              additionalProperties: true
+          required:
+            - customer_id
+            - sale_amount
+            - store_id
+            - store_name
+            - operator_id
+            - operator_name
+            - wallet_balance
+            - result
+        message:
+          type: string
+          example: Sale registered successfully
+      required:
+        - code
+        - status
+        - data
+        - message
     Transaction:
       type: object
       properties:
@@ -999,9 +1353,15 @@ components:
         store_name:
           type: string
           example: Main Store
+        operator_id:
+          type: integer
+          example: 149752
+        operator_name:
+          type: string
+          example: Store Operator
         created_at:
           type: string
-          format: date-time
+          description: Date and time in `YYYY-MM-DD HH:mm:ss` format.
           example: '2026-08-04 14:30:00'
         refunded:
           type: boolean
@@ -1015,6 +1375,8 @@ components:
         - sale_amount
         - points_amount
         - type
+        - operator_id
+        - operator_name
         - created_at
         - refunded
         - refundable
