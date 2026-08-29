@@ -21,8 +21,9 @@ info:
 
     Operator credentials and permissions
 
-    Each API Key identifies one Smartbis user. For operational requests, use the API Key of an operator linked to a
-    store. The operator may authenticate with their own Secret Key or with the administrator's Secret Key. Using the
+    Each API Key identifies one Smartbis user. The administrator API Key operates in the main operation. For a
+    registered store, use the API Key of an operator linked to that store. The operator may authenticate with their
+    own Secret Key or with the administrator's Secret Key. Using the
     administrator's Secret Key does not grant administrator privileges: authorization always follows the user in the
     API Key and the same store permissions configured in the Smartbis app.
 
@@ -34,10 +35,10 @@ info:
 
     Multi-store accounts
 
-    The API derives the store from the authenticated operator's permissions. To process a sale in another store, use
+    For operators, the API derives the store from their permissions. To process a sale in another store, use
     the API Key of an operator authorized to register sales in that store and generate a separate Bearer token. The
-    administrator API Key does not select or distribute sales, and `POST /sales` does not accept `store_id` or another
-    override field/header. If an operator is linked to more than one store for the same operation, the API returns
+    administrator API Key registers sales in the administrator's main operation; it does not select or distribute sales
+    among registered stores. `POST /sales` does not accept `store_id` or another override field/header. If an operator is linked to more than one store for the same operation, the API returns
     `409 Conflict` instead of selecting a store arbitrarily.
 
     Step 2 — Use Bearer Token
@@ -74,7 +75,7 @@ info:
 
     Typical Integration Flow
 
-    1. Generate an access token using the API Key of the operator who will perform the request
+    1. Generate an access token using the API Key of the administrator or operator who will perform the request
     2. Create or locate a customer  
     3. Register a sale using `sale_amount`  
     4. Smartbis processes loyalty rewards automatically
@@ -478,10 +479,11 @@ paths:
         public document. `sale_amount` must be greater than zero. To reverse a sale, list the customer's transactions
         and use the refund endpoint with the original `transaction_id`.
 
-        **Authorization and store selection:** the authenticated operator must have permission to register sales. The sale is
-        processed by the single active store that grants this permission to the operator in the API Key. For another
-        store, use the API Key of an operator authorized there and generate a separate token. The administrator API
-        Key cannot register sales or distribute them among stores. This endpoint does not accept `store_id` or any
+        **Authorization and store selection:** an operator's sale is processed by the single active store that grants
+        sales permission to the operator in the API Key. For another store, use the API Key of an operator authorized
+        there and generate a separate token. The administrator API Key registers a sale in the administrator's main
+        operation and does not distribute it among registered stores.
+        This endpoint does not accept `store_id` or any
         other request field/header to override the resolved store.
       security:
         - bearerAuth: []
@@ -539,13 +541,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '403':
-          description: Administrator API Key used for a sale, or operator without permission to register sales.
+          description: The operator does not have permission to register sales.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: The operator is linked to more than one active store for sales.
+          description: The operator is linked to more than one active store for sales, or the administrator's main operation is not configured.
           content:
             application/json:
               schema:
