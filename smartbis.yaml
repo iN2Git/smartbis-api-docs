@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Smartbis API v2
-  version: 1.5.0
+  version: 1.9.0
   description: |
     Smartbis API v2 enables external systems to integrate directly with the Smartbis Loyalty Marketing platform,
     allowing businesses to automate customer engagement, register sales, validate coupons, and interact with the
@@ -28,8 +28,8 @@ info:
     API Key and the same store permissions configured in the Smartbis app.
 
     • Sales permission: register sales, list related transactions, and refund the operator's own sales
-    • Voucher validation permission: list and validate vouchers for the linked store
-    • Customer registration permission: create customers for the linked store
+    • Voucher validation permission: list, validate, and perform the existing manual voucher redemption for the linked store
+    • Customer registration permission: create and update customers for the linked store
     • Customer visibility: according to the store settings, an operator may see all company customers or only
       customers related to that operator or registered by an authorized store
 
@@ -67,6 +67,7 @@ info:
     Core Features
 
     • Customer Management  
+    • Direct Referral Visibility
     • Sales Registration (loyalty engine trigger)  
     • Customer Transaction History and Refunds
     • Rewards access and inventory management  
@@ -94,6 +95,8 @@ servers:
 tags:
   - name: Auth
   - name: Customers
+  - name: Referrals
+  - name: Partners
   - name: Register Sales
   - name: Transactions
   - name: Coupons
@@ -196,6 +199,248 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /partners:
+    get:
+      tags: [Partners]
+      summary: List partners
+      operationId: getPartners
+      description: |
+        Lists the authenticated company's own partners. The administrator's master location, marketplace locations,
+        and automatically generated integration locations are excluded. Both active and inactive partners are
+        returned unless the optional `active` filter is provided. Administrator access is required.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: per_page
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - name: active
+          in: query
+          required: false
+          description: Filters partners by active status. Accepts `true`, `false`, `1`, or `0`.
+          schema: {type: boolean}
+      responses:
+        '200':
+          description: Partners returned successfully.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PartnerListResponse'}
+        '401':
+          description: Unauthorized.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '422':
+          description: Invalid active filter.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+    post:
+      tags: [Partners]
+      summary: Create a partner
+      operationId: postPartner
+      description: |
+        Creates and immediately activates an own partner using the same registration rules as the Smartbis panel.
+        The selected segment must be active and belong to the authenticated company. Creation respects the company's
+        plan: MicroClub does not allow own partners, and MiniClub allows at most five active partners. Free accounts
+        retain the existing unrestricted panel behavior.
+
+        By default, the partner inherits the administrator location's conversion. Set
+        `uses_administrator_conversion` to `false` and provide `conversion` to configure a local value. For cashback
+        programs, `conversion` is the user-facing percentage (for example, `5` means 5% and is stored as `0.05`). For
+        point programs, it is the number of points corresponding to one monetary unit. Operator permissions,
+        financial limits, integration credentials, and image uploads remain panel-only. Administrator access is required.
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreatePartnerRequest'}
+            examples:
+              inheritedConversion:
+                summary: Create a partner using the administrator conversion
+                value:
+                  name: Downtown Store
+                  description: Main downtown service location.
+                  segment_id: 7
+                  phone: '+551130000000'
+                  whatsapp: '+5511999999999'
+                  email: store@example.com
+                  uses_administrator_conversion: true
+              customCashback:
+                summary: Create a partner with a custom cashback percentage
+                value:
+                  name: North Store
+                  segment_id: 7
+                  phone: '+551130000001'
+                  whatsapp: '+5511999999998'
+                  uses_administrator_conversion: false
+                  conversion: 5
+                  website_enabled: true
+                  website: https://store.example.com
+      responses:
+        '201':
+          description: Partner created successfully.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PartnerResponse'}
+        '401':
+          description: Unauthorized.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '403':
+          description: Administrator access is required or the current plan does not allow own partners.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '404':
+          description: Active segment not found in the authenticated company.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '409':
+          description: Active partner limit reached or company state changed concurrently.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '422':
+          description: Invalid field, value, conversion configuration, or idempotency key.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '500':
+          description: Partner could not be created safely.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+
+  /partners/{partner_id}:
+    parameters:
+      - name: partner_id
+        in: path
+        required: true
+        schema: {type: integer, minimum: 1}
+    get:
+      tags: [Partners]
+      summary: Get partner details
+      operationId: getPartner
+      description: |
+        Returns a partner belonging to the authenticated company. Internal integration settings, API credentials,
+        operator permissions, financial configuration, and the administrator's master location are never exposed.
+        Administrator access is required.
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Partner returned successfully.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PartnerResponse'}
+        '401':
+          description: Unauthorized.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '404':
+          description: Partner not found in the authenticated company.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+    patch:
+      tags: [Partners]
+      summary: Update, activate, or deactivate a partner
+      operationId: patchPartner
+      description: |
+        Partially updates an own partner. Omitted fields remain unchanged. Send `active: true` to activate the partner
+        or `active: false` to deactivate it; no separate status endpoint exists. Activation respects the company's
+        plan and requires at least one operator already linked to the partner. As in the Smartbis panel, deactivation
+        removes all operator links for sales registration, voucher validation, and customer registration. Operators
+        must be reassigned in the panel before that partner can subsequently be reactivated.
+
+        Updating the local conversion or changing between local and administrator conversion atomically recalculates
+        the redemption points of the partner's value-based coupons using the existing Smartbis calculation. For
+        cashback programs, `conversion` is the user-facing percentage. Operator permissions, financial limits,
+        integration credentials, and image uploads cannot be changed through this endpoint. Administrator access is required.
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdatePartnerRequest'}
+            examples:
+              profile:
+                value:
+                  name: Updated Store
+                  phone: '+551130000002'
+                  email: updated-store@example.com
+              customConversion:
+                value:
+                  uses_administrator_conversion: false
+                  conversion: 7.5
+              inheritConversion:
+                value:
+                  uses_administrator_conversion: true
+              deactivate:
+                value:
+                  active: false
+              activate:
+                value:
+                  active: true
+      responses:
+        '200':
+          description: Partner updated successfully.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PartnerResponse'}
+        '401':
+          description: Unauthorized.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '403':
+          description: Administrator access is required or the current plan does not allow own partners.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '404':
+          description: Partner or active segment not found in the authenticated company.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '409':
+          description: Activation limit reached, no operator is linked, or the administrator conversion is unavailable.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '422':
+          description: Invalid field, value, conversion configuration, or idempotency key.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '500':
+          description: Partner or related coupon points could not be updated safely.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+
   /customers/{customer_id}/dependents:
     parameters:
       - name: customer_id
@@ -260,6 +505,13 @@ paths:
       tags: [Dependents]
       summary: Update a dependent
       operationId: patchDependent
+      description: |
+        Partially updates the dependent fields supported by the existing Smartbis data model. Omitted fields remain
+        unchanged. Send an empty string to clear the optional phone, birth date, or identity document.
+
+        The holder and public document are immutable through this endpoint. Dependents do not have an independent
+        active status; their eligibility is inherited from the holder. This endpoint does not delete dependents.
+        Administrator scope is required.
       security: [{bearerAuth: []}]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -480,6 +732,12 @@ paths:
         of the transaction and must be used when requesting a refund. Only transactions where `refundable` is `true`
         are eligible for refund. Operators need permission to register sales and receive only transactions registered by their
         own operator identity. Administrators can view the company-wide history.
+
+        `wallet_balance` is calculated from the customer's ledger for the authenticated company instead of using the
+        cached customer value. `balance_mode` indicates whether the company uses a global wallet or balances separated
+        by partner. In partner mode, administrators receive every partner balance, while operators receive balances
+        only for partners where they have sales-registration permission. This endpoint is the canonical statement;
+        no separate wallet-statement endpoint exists.
       security:
         - bearerAuth: []
       parameters:
@@ -528,6 +786,74 @@ paths:
                 $ref: '#/components/schemas/Error'
         '404':
           description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /customers/{customer_id}/referrals:
+    get:
+      tags:
+        - Referrals
+      summary: List direct customer referrals
+      operationId: getCustomerReferrals
+      description: |
+        Returns only customers directly referred by the selected customer. The endpoint does not expand a
+        multilevel referral network and does not create, recalculate, or reverse referral rewards. Both the selected
+        customer and returned referrals follow the authenticated user's company and customer-visibility rules.
+        `wallet_balance` is calculated from each referred customer's ledger for the authenticated company.
+
+        A direct relationship may come from a valid participant invitation or, when both related company settings are
+        enabled, from customer creation by an operator. Relationship assignment is separate from reward issuance.
+        Referral rewards remain controlled by the existing participant confirmation process and are recorded as normal
+        ledger transactions. Use `GET /customers/{customer_id}/transactions` for the existing statement; no separate
+        referral statement or referral-reward reversal endpoint exists.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          description: Smartbis identifier of the referring customer.
+          schema:
+            type: integer
+            example: 12345
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Direct referrals returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferralListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The authenticated operator has no operational customer permission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Customer not found within the authorized scope
           content:
             application/json:
               schema:
@@ -763,6 +1089,99 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /customers/{customer_id}:
+    patch:
+      tags:
+        - Customers
+      summary: Update Customer
+      operationId: patchCustomer
+      description: |
+        Partially updates an existing customer visible to the authenticated operator. Omitted fields remain unchanged.
+        Send `active: true` to activate the customer or `active: false` to deactivate the customer. The authenticated
+        operator cannot deactivate their own customer record, and reactivation respects the company's participant limit.
+
+        Passwords, wallet balances, plans, and subscriptions cannot be changed through this endpoint. A public document
+        can be added when the existing document is empty, but an existing document cannot be replaced. Use the dedicated
+        subscription endpoint for plan access changes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          description: Smartbis internal customer identifier.
+          schema:
+            type: integer
+            minimum: 1
+            example: 12345
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerRequest'
+            examples:
+              profile:
+                summary: Update contact and address fields
+                value:
+                  name: Updated Customer
+                  phone: '5511993999994'
+                  email: updated@example.com
+                  postal_code: 88032-005
+                  city: Florianopolis
+              deactivate:
+                summary: Deactivate a customer
+                value:
+                  active: false
+              activate:
+                summary: Activate a customer
+                value:
+                  active: true
+      responses:
+        '200':
+          description: Customer updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCustomerResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The authenticated operator does not have permission to update customers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Customer not found or not visible to the authenticated operator.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The document, phone, or email is already in use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid field, value, status transition, or participant limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Customer could not be updated safely.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /sales:
     post:
       tags:
@@ -948,8 +1367,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/CouponListResponse'
         '401':
           description: Unauthorized
           content:
@@ -964,6 +1382,215 @@ paths:
                 $ref: '#/components/schemas/Error'
         '422':
           description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags:
+        - Coupons
+      summary: Create Coupon or Reward
+      operationId: postCoupon
+      description: |
+        Creates and immediately publishes a coupon or reward using the same business fields as the Smartbis panel.
+        The target `store_id` is required and must identify an active, non-marketplace store in the authenticated
+        company. Category and geographic coordinates are inherited from that store. The operation respects the
+        store's active coupon limit.
+
+        When `automatic_calculation` is false, `redemption_points` is required and is stored as the final amount
+        deducted on redemption. When it is true, Smartbis calculates the amount from `estimated_value`,
+        `benefit_percentage`, and the effective conversion configured for the store. Images are managed in the panel
+        and are not accepted by this JSON endpoint. Administrator access is required.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCouponRequest'
+            examples:
+              manualPoints:
+                summary: Publish a reward with a manually defined redemption cost
+                value:
+                  store_id: 10
+                  description: Free Product
+                  details: Redeem this reward at the selected store.
+                  type: 3
+                  estimated_value: 50
+                  benefit_percentage: 100
+                  redemption_points: 500
+                  automatic_calculation: false
+                  stock: 100
+                  limit: 1
+                  validity_days: 30
+              automaticPoints:
+                summary: Let Smartbis calculate the redemption cost
+                value:
+                  store_id: 10
+                  description: 10 Percent Off
+                  type: 2
+                  estimated_value: 100
+                  benefit_percentage: 10
+                  automatic_calculation: true
+                  stock: 50
+                  limit: 1
+                  validity_days: 15
+              customRedirect:
+                summary: Publish a reward that redirects to an external HTTPS destination
+                value:
+                  store_id: 10
+                  description: Online Discount
+                  type: 2
+                  estimated_value: 20
+                  benefit_percentage: 10
+                  redemption_points: 200
+                  automatic_calculation: false
+                  stock: 100
+                  limit: 1
+                  validity_days: 30
+                  custom_redirect_enabled: true
+                  custom_redirect_url: https://shop.example.com/redeem
+                  custom_code: SAVE10
+      responses:
+        '201':
+          description: Coupon created and published successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCouponResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Store not found in the authenticated company.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Store coupon limit reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid field, value, calculation mode, redirect configuration, or idempotency key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Coupon could not be created safely.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /coupons/{coupon_id}:
+    patch:
+      tags:
+        - Coupons
+      summary: Update Coupon or Reward
+      operationId: patchCoupon
+      description: |
+        Partially updates an existing coupon or reward. Send `active: true` to activate it or `active: false` to
+        deactivate it. Reactivation respects the active coupon limit configured for the original store. The target
+        store and inherited category cannot be changed.
+
+        `automatic_calculation` is an update instruction rather than persisted state. Send it as `true` to recalculate
+        the redemption cost from the resulting estimated value, benefit percentage, and current effective store
+        conversion. Otherwise the existing redemption cost remains unchanged unless `redemption_points` is supplied.
+        Do not send both automatic calculation and redemption points. Stock is intentionally excluded; use the
+        dedicated stock endpoint. Administrator access is required.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: coupon_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCouponRequest'
+            examples:
+              content:
+                summary: Update reward content and redemption rules
+                value:
+                  description: Updated Reward
+                  details: Updated redemption instructions.
+                  estimated_value: 75
+                  benefit_percentage: 100
+                  redemption_points: 750
+                  limit: 2
+                  validity_days: 45
+              recalculate:
+                summary: Recalculate the redemption cost using the store conversion
+                value:
+                  estimated_value: 100
+                  benefit_percentage: 20
+                  automatic_calculation: true
+              deactivate:
+                value:
+                  active: false
+              activate:
+                value:
+                  active: true
+      responses:
+        '200':
+          description: Coupon updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateCouponResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Coupon not found in the authenticated company.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Coupon store inactive, concurrent state change, or active coupon limit reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid or unsupported field, value, calculation mode, redirect configuration, or idempotency key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Coupon could not be updated safely.
           content:
             application/json:
               schema:
@@ -1201,6 +1828,157 @@ paths:
 
         '500':
           description: Category could not be created safely.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /categories/{category_id}:
+    patch:
+      tags:
+        - Categories
+      summary: Update Category
+      operationId: patchCategory
+      description: |
+        Partially updates a category. Send `active: true` to activate it or `active: false` to deactivate it.
+        Deactivation is logical and records the status change time; it does not delete the category or rewrite existing
+        reward and partner references. Administrator access is required.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: category_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCategoryRequest'
+            examples:
+              rename:
+                value:
+                  description: Food & Beverage
+              deactivate:
+                value:
+                  active: false
+              activate:
+                value:
+                  active: true
+      responses:
+        '200':
+          description: Category updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator access is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Category not found in the authenticated company.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid field, value, or idempotency key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Category could not be updated safely.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vouchers/manual-redemptions:
+    post:
+      tags:
+        - Vouchers
+      summary: Perform Manual Voucher Redemption
+      operationId: postManualVoucherRedemption
+      description: |
+        Performs the existing Smartbis manual redemption flow. This is not a generic voucher issuance endpoint.
+        Smartbis verifies that manual redemption is enabled, resolves the store from the authenticated operator,
+        validates the active customer and available balance, creates the voucher, records the matching negative
+        `Resgate` transaction, updates the customer's cached balance, and commits all changes atomically.
+
+        When the company uses per-partner balances, sufficiency is checked in the resolved store. Otherwise the global
+        customer balance is used. Point-based programs accept whole-number amounts; cashback programs accept two
+        decimal places. Voucher validity and minimum-order rules come from the company configuration.
+
+        The voucher is created as already completed and validated by the operator, exactly like the manual operation in
+        the panel. The operation is irreversible: an issued manual-redemption voucher cannot be edited, cancelled, or
+        reversed through the API. The operator must have voucher permission for exactly one store; administrators use
+        the configured main store.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualVoucherRedemptionRequest'
+            example:
+              customer_id: 12345
+              amount: 100
+      responses:
+        '201':
+          description: Manual voucher redemption completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualVoucherRedemptionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Manual redemption is disabled or the operator lacks voucher permission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Active customer not found or not visible to the operator.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Insufficient balance, ambiguous store permission, missing administrator store, or concurrent state change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid amount, customer, field, or idempotency key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: The voucher and balance transaction could not be committed atomically.
           content:
             application/json:
               schema:
@@ -1511,6 +2289,129 @@ components:
         - status
         - data
         - message
+    Partner:
+      type: object
+      properties:
+        partner_id: {type: integer, example: 42}
+        name: {type: string, example: Downtown Store}
+        description: {type: string}
+        segment_id: {type: integer, nullable: true, example: 7}
+        segment_name: {type: string, nullable: true, example: Restaurants}
+        phone: {type: string, example: '+551130000000'}
+        whatsapp: {type: string, example: '+5511999999999'}
+        email: {type: string, format: email, example: store@example.com}
+        map_enabled: {type: integer, enum: [0, 1], example: 1}
+        map_embed_url: {type: string, format: uri, nullable: true}
+        website_enabled: {type: integer, enum: [0, 1], example: 1}
+        website: {type: string, nullable: true, example: example.com}
+        uses_administrator_conversion: {type: integer, enum: [0, 1], example: 1}
+        conversion:
+          type: number
+          format: float
+          nullable: true
+          description: Stored local conversion factor; null when administrator conversion is inherited. Cashback percentages are normalized, so 5% is returned as 0.05.
+          example: 0.05
+        active: {type: integer, enum: [0, 1], example: 1}
+        status_changed_at: {type: string, nullable: true, example: '2026-10-01 14:30:00'}
+        created_at: {type: string, example: '2026-01-10 09:00:00'}
+      required: [partner_id, name, description, map_enabled, website_enabled, uses_administrator_conversion, active, created_at]
+    CreatePartnerRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 25
+          description: Letters, numbers, spaces, and ampersands only.
+          example: Downtown Store
+        description: {type: string, example: Main downtown service location.}
+        segment_id: {type: integer, minimum: 1, example: 7}
+        phone: {type: string, minLength: 1, maxLength: 300, example: '+551130000000'}
+        whatsapp: {type: string, minLength: 1, maxLength: 20, example: '+5511999999999'}
+        email: {type: string, format: email, maxLength: 200, example: store@example.com}
+        map_enabled: {type: boolean, default: false}
+        map_embed_url:
+          type: string
+          format: uri
+          description: Google Maps embed URL beginning with `https://www.google.com/maps/embed?`.
+        website_enabled: {type: boolean, default: false}
+        website: {type: string, maxLength: 200, example: 'https://store.example.com'}
+        uses_administrator_conversion:
+          type: boolean
+          default: true
+          description: When true, the partner dynamically inherits the administrator location's conversion.
+        conversion:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          description: Required only for a custom conversion. In cashback programs this is a percentage.
+      required: [name, segment_id, phone, whatsapp]
+    UpdatePartnerRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 25
+          description: Letters, numbers, spaces, and ampersands only.
+        description: {type: string}
+        segment_id: {type: integer, minimum: 1}
+        phone: {type: string, minLength: 1, maxLength: 300}
+        whatsapp: {type: string, minLength: 1, maxLength: 20}
+        email: {type: string, format: email, maxLength: 200}
+        map_enabled: {type: boolean}
+        map_embed_url:
+          type: string
+          format: uri
+          description: Google Maps embed URL beginning with `https://www.google.com/maps/embed?`.
+        website_enabled: {type: boolean}
+        website: {type: string, maxLength: 200}
+        uses_administrator_conversion:
+          type: boolean
+          description: When true, the partner dynamically inherits the administrator location's conversion.
+        conversion:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          description: Custom conversion value. In cashback programs this is a percentage.
+        active:
+          type: boolean
+          description: Activates or deactivates the partner. Deactivation removes the partner's operator links.
+    PartnerResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            partner: {$ref: '#/components/schemas/Partner'}
+          required: [partner]
+        request_id: {type: string}
+      required: [code, status, data, request_id]
+    PartnerListResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            total: {type: integer, example: 2}
+            page: {type: integer, example: 1}
+            per_page: {type: integer, example: 50}
+            total_pages: {type: integer, example: 1}
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Partner'}
+          required: [total, page, per_page, total_pages, items]
+        request_id: {type: string}
+      required: [code, status, data, request_id]
     DependentEligibility:
       type: object
       properties:
@@ -1544,12 +2445,22 @@ components:
       required: [name, document]
     DependentUpdate:
       type: object
+      additionalProperties: false
+      minProperties: 1
       properties:
-        name: {type: string}
-        phone: {type: string}
-        birth_date: {type: string, format: date}
+        name: {type: string, minLength: 3}
+        phone:
+          type: string
+          description: Send an empty string to clear the optional phone.
+        birth_date:
+          type: string
+          description: Valid YYYY-MM-DD date, or an empty string to clear it.
         identity_document: {type: string}
-        country: {type: string}
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: ISO 3166-1 alpha-2 country code.
     DependentResponse:
       type: object
       properties:
@@ -1885,9 +2796,20 @@ components:
         email:
           type: string
           example: customer@example.com
-        birthday:
+        birth_date:
           type: string
           example: '1990-01-20'
+        birthday:
+          type: string
+          deprecated: true
+          description: Legacy alias of `birth_date`, retained for backward compatibility.
+          example: '1990-01-20'
+        gender:
+          type: string
+          example: M
+        identity_document:
+          type: string
+          example: '1234567'
         country:
           type: string
           description: ISO 3166-1 alpha-2 country code.
@@ -1984,6 +2906,65 @@ components:
         - code
         - status
         - data
+    Referral:
+      type: object
+      properties:
+        customer_id:
+          type: integer
+          example: 23456
+        name:
+          type: string
+          example: Referred Customer
+        phone:
+          type: string
+          example: '5511999999999'
+        email:
+          type: string
+          example: customer@example.com
+        wallet_balance:
+          type: number
+          format: float
+          description: Current balance calculated from this customer's ledger for the authenticated company.
+          example: 25.5
+        active:
+          type: integer
+          enum: [0, 1]
+          example: 1
+        created_at:
+          type: string
+          description: Date and time in `YYYY-MM-DD HH:mm:ss` format.
+          example: '2026-10-01 14:30:00'
+      required: [customer_id, name, phone, email, wallet_balance, active, created_at]
+    ReferralListResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        status:
+          type: string
+          example: success
+        data:
+          type: object
+          properties:
+            total:
+              type: integer
+              example: 1
+            page:
+              type: integer
+              example: 1
+            per_page:
+              type: integer
+              example: 50
+            total_pages:
+              type: integer
+              example: 1
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Referral'
+          required: [total, page, per_page, total_pages, items]
+      required: [code, status, data]
     CreateCustomerResponse:
       type: object
       properties:
@@ -2012,6 +2993,268 @@ components:
         - status
         - data
         - message
+    UpdateCustomerRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: {type: string, minLength: 1, example: Updated Customer}
+        document:
+          type: string
+          description: May only be added when the existing customer document is empty.
+          example: '529.982.247-25'
+        cpf:
+          type: string
+          deprecated: true
+          description: Legacy alias of `document`.
+        phone: {type: string, example: '5511993999994'}
+        email: {type: string, format: email, example: updated@example.com}
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: BR
+        postal_code: {type: string, example: 88032-005}
+        state: {type: string, example: SC}
+        city: {type: string, example: Florianopolis}
+        city_code: {type: string, example: '4205407'}
+        street: {type: string, example: Rodovia Jose Carlos Daux}
+        number: {type: string, example: '4150'}
+        complement: {type: string, example: Suite 10}
+        district: {type: string, example: Saco Grande}
+        birth_date: {type: string, format: date, example: '1990-01-20'}
+        gender: {type: string, example: M}
+        identity_document: {type: string, example: '1234567'}
+        active:
+          type: boolean
+          description: Set to true to activate or false to deactivate the customer.
+    UpdateCustomerResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            customer:
+              $ref: '#/components/schemas/Customer'
+          required: [customer]
+        message: {type: string, example: Customer updated successfully}
+      required: [code, status, data, message]
+    Category:
+      type: object
+      properties:
+        category_id: {type: integer, example: 10}
+        description: {type: string, maxLength: 25, example: Food & Beverage}
+        active:
+          type: integer
+          enum: [0, 1]
+          example: 1
+        status_changed_at:
+          type: string
+          nullable: true
+          description: Date and time in `YYYY-MM-DD HH:mm:ss` format when the active status last changed.
+          example: '2026-10-01 14:30:00'
+      required: [category_id, description, active]
+    UpdateCategoryRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 25
+          example: Food & Beverage
+        active:
+          type: boolean
+          description: Set to true to activate or false to deactivate the category.
+    CategoryResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            category: {$ref: '#/components/schemas/Category'}
+          required: [category]
+        message: {type: string, example: Category updated successfully}
+      required: [code, status, data, message]
+    Coupon:
+      type: object
+      properties:
+        coupon_id: {type: integer, example: 123}
+        store_id: {type: integer, example: 10}
+        category_id: {type: integer, nullable: true, example: 5}
+        description: {type: string, maxLength: 25, example: Free Product}
+        details: {type: string, example: Redeem this reward at the selected store.}
+        required_value: {type: number, format: float, minimum: 0, example: 500}
+        stock: {type: number, minimum: 0, example: 100}
+        type:
+          type: integer
+          minimum: 1
+          maximum: 14
+          description: Existing Smartbis reward type from 1 through 14.
+          example: 3
+        estimated_value: {type: number, format: float, minimum: 0, example: 50}
+        benefit_percentage: {type: number, format: float, minimum: 0, maximum: 100, example: 100}
+        validity_days: {type: integer, minimum: 0, example: 30}
+        limit: {type: integer, minimum: 0, example: 1}
+        custom_redirect_enabled:
+          type: integer
+          enum: [0, 1]
+          example: 0
+        custom_redirect_url: {type: string, format: uri, nullable: true}
+        custom_code: {type: string, nullable: true, maxLength: 50}
+        active:
+          type: integer
+          enum: [0, 1]
+          example: 1
+        status_changed_at: {type: string, nullable: true}
+        created_at: {type: string, example: '2026-10-01 14:30:00'}
+      required: [coupon_id, store_id, description, required_value, stock, type, estimated_value, benefit_percentage, validity_days, limit, custom_redirect_enabled, active, created_at]
+    CreateCouponRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        store_id: {type: integer, minimum: 1}
+        description: {type: string, minLength: 1, maxLength: 25}
+        details: {type: string}
+        type:
+          type: integer
+          minimum: 1
+          maximum: 14
+          description: '1: Cashback; 2: Discount; 3: Product; 4: Free Shipping; 5: Gift; 6: Upgrade; 7: Early Access; 8: Extra Points; 9: Progressive Discount; 10: Product Discount; 11: First Purchase; 12: Referral; 13: Birthday; 14: Free Form.'
+        estimated_value: {type: number, format: float, minimum: 0}
+        benefit_percentage: {type: number, format: float, minimum: 0, maximum: 100}
+        redemption_points:
+          type: number
+          format: float
+          minimum: 0
+          description: Required when automatic_calculation is false; ignored when it is true.
+        automatic_calculation: {type: boolean, default: false}
+        stock: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 0, default: 0}
+        validity_days: {type: integer, minimum: 0, default: 0}
+        custom_redirect_enabled: {type: boolean, default: false}
+        custom_redirect_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+        custom_code: {type: string, maxLength: 50}
+      required: [store_id, description, type, estimated_value, benefit_percentage, stock]
+    CreateCouponResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 201}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            coupon: {$ref: '#/components/schemas/Coupon'}
+          required: [coupon]
+        message: {type: string, example: Coupon created successfully}
+      required: [code, status, data, message]
+    UpdateCouponRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        description: {type: string, minLength: 1, maxLength: 25}
+        details: {type: string}
+        type:
+          type: integer
+          minimum: 1
+          maximum: 14
+          description: Existing Smartbis reward type from 1 through 14.
+        estimated_value: {type: number, format: float, minimum: 0}
+        benefit_percentage: {type: number, format: float, minimum: 0, maximum: 100}
+        redemption_points:
+          type: number
+          format: float
+          minimum: 0
+          description: Explicit replacement for the redemption cost. Do not combine with automatic_calculation true.
+        automatic_calculation:
+          type: boolean
+          description: Send true to recalculate redemption points for this update. False is not persisted as state.
+        limit: {type: integer, minimum: 0}
+        validity_days: {type: integer, minimum: 0}
+        custom_redirect_enabled: {type: boolean}
+        custom_redirect_url:
+          type: string
+          format: uri
+          pattern: '^https://'
+        custom_code: {type: string, maxLength: 50}
+        active:
+          type: boolean
+          description: Set to true to activate or false to deactivate the coupon.
+    UpdateCouponResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            coupon: {$ref: '#/components/schemas/Coupon'}
+          required: [coupon]
+        message: {type: string, example: Coupon updated successfully}
+      required: [code, status, data, message]
+    CouponListResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            total: {type: integer, minimum: 0}
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Coupon'}
+          required: [total, items]
+      required: [code, status, data]
+    ManualVoucherRedemptionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        customer_id:
+          type: integer
+          minimum: 1
+          description: Active Smartbis customer identifier visible to the authenticated operator.
+        amount:
+          type: number
+          format: float
+          exclusiveMinimum: true
+          minimum: 0
+          description: Amount deducted from the customer's available points or cashback balance.
+      required: [customer_id, amount]
+    ManualVoucherRedemptionResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 201}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            voucher:
+              type: object
+              additionalProperties: true
+            transaction_id:
+              type: integer
+              description: Identifier of the negative Resgate transaction created in the customer ledger.
+            wallet_balance:
+              type: number
+              format: float
+              description: Updated global customer wallet balance.
+            irreversible:
+              type: boolean
+              enum: [true]
+              description: Confirms that this manual voucher redemption cannot be reversed through the API.
+          required: [voucher, transaction_id, wallet_balance, irreversible]
+        message: {type: string, example: Manual voucher redemption completed successfully}
+      required: [code, status, data, message]
     RegisterSaleByDocument:
       type: object
       properties:
@@ -2220,6 +3463,21 @@ components:
             total_pages:
               type: integer
               example: 1
+            wallet_balance:
+              type: number
+              format: float
+              description: Current balance calculated from the authenticated company's customer ledger.
+              example: 125.5
+            balance_mode:
+              type: string
+              enum: [global, partner]
+              description: Indicates whether the company uses one global wallet or balances separated by partner.
+              example: partner
+            partner_balances:
+              type: array
+              description: Partner balance composition in partner mode. Empty in global mode.
+              items:
+                $ref: '#/components/schemas/PartnerBalance'
             items:
               type: array
               items:
@@ -2229,11 +3487,30 @@ components:
             - page
             - per_page
             - total_pages
+            - wallet_balance
+            - balance_mode
+            - partner_balances
             - items
       required:
         - code
         - status
         - data
+    PartnerBalance:
+      type: object
+      properties:
+        partner_id:
+          type: integer
+          minimum: 0
+          description: Smartbis location identifier. Zero may represent a legacy administrator movement without a location ID.
+          example: 10
+        partner_name:
+          type: string
+          example: Downtown Store
+        balance:
+          type: number
+          format: float
+          example: 75.5
+      required: [partner_id, partner_name, balance]
     RefundTransactionRequest:
       type: object
       properties:
