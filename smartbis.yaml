@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Smartbis API v2
-  version: 1.2.0
+  version: 1.5.0
   description: |
     Smartbis API v2 enables external systems to integrate directly with the Smartbis Loyalty Marketing platform,
     allowing businesses to automate customer engagement, register sales, validate coupons, and interact with the
@@ -72,6 +72,14 @@ info:
     • Rewards access and inventory management  
     • Categories management  
     • Voucher validation
+    • Participant plans and subscription access management
+    • Dependents, inherited eligibility, and active-life reconciliation
+
+    Write safety and authorization
+
+    Every write operation requires `Idempotency-Key` (8–128 characters). Reusing the same key with the same request
+    returns the stored response; reusing it with another payload returns `409 Conflict`. Token responses expose the
+    effective scopes derived from the administrator role or the operator permissions already configured in Smartbis.
 
     Typical Integration Flow
 
@@ -91,6 +99,13 @@ tags:
   - name: Coupons
   - name: Categories
   - name: Vouchers
+  - name: Plans
+  - name: Subscriptions
+  - name: Dependents
+  - name: Eligibility
+  - name: Webhooks
+  - name: Providers
+  - name: Access Links
 paths:
   /auth/token:
     post:
@@ -149,10 +164,16 @@ paths:
                       expires_in:
                         type: integer
                         example: 86400
+                      scopes:
+                        type: array
+                        description: Effective authorization scopes derived from the authenticated user's current Smartbis permissions.
+                        items: {type: string}
+                        example: ['customers:read', 'customers:write']
                     required:
                       - access_token
                       - token_type
                       - expires_in
+                      - scopes
                 required:
                   - code
                   - status
@@ -171,6 +192,279 @@ paths:
                 $ref: '#/components/schemas/Error'
         '500':
           description: Token could not be generated safely.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /customers/{customer_id}/dependents:
+    parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema: {type: integer}
+    get:
+      tags: [Dependents]
+      summary: List a holder's dependents
+      operationId: getCustomerDependents
+      description: Returns dependents belonging to the authenticated company. Eligibility is inherited from the holder. Administrator scope is required.
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Dependents returned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: {type: integer, example: 200}
+                  status: {type: string, example: success}
+                  data:
+                    type: object
+                    properties:
+                      total: {type: integer}
+                      items: {type: array, items: {$ref: '#/components/schemas/Dependent'}}
+        '403': {description: 'Missing dependents:read scope', content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: Holder not found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    post:
+      tags: [Dependents]
+      summary: Create a dependent
+      operationId: postCustomerDependent
+      description: Creates a dependent linked to the holder, respecting company isolation and the holder plan limit. Administrator scope is required.
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DependentWrite'}
+      responses:
+        '201': {description: Dependent created, content: {application/json: {schema: {$ref: '#/components/schemas/DependentResponse'}}}}
+        '409': {description: Duplicate document or plan limit reached, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '422': {description: Invalid field or idempotency key, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /dependents/{dependent_id}:
+    parameters:
+      - name: dependent_id
+        in: path
+        required: true
+        schema: {type: integer}
+    get:
+      tags: [Dependents]
+      summary: Get a dependent and individual eligibility
+      operationId: getDependent
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Dependent returned, content: {application/json: {schema: {$ref: '#/components/schemas/DependentResponse'}}}}
+        '404': {description: Dependent not found in the authenticated company, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    patch:
+      tags: [Dependents]
+      summary: Update a dependent
+      operationId: patchDependent
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DependentUpdate'}
+      responses:
+        '200': {description: Dependent updated, content: {application/json: {schema: {$ref: '#/components/schemas/DependentResponse'}}}}
+        '404': {description: Dependent not found in the authenticated company, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '422': {description: Invalid field or idempotency key, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /eligibility/reconciliation:
+    get:
+      tags: [Eligibility]
+      summary: Reconcile active lives by plan and period
+      operationId: getEligibilityReconciliation
+      description: Returns active holders and dependents. Dependents inherit the holder's eligibility. Clinical data is never returned.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: plan_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: from, in: query, required: false, schema: {type: string, format: date}}
+        - {name: to, in: query, required: false, schema: {type: string, format: date}}
+        - {name: page, in: query, required: false, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: per_page, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+      responses:
+        '200': {description: Active lives returned, content: {application/json: {schema: {$ref: '#/components/schemas/ReconciliationResponse'}}}}
+        '422': {description: Invalid plan or period, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /plans:
+    get:
+      tags:
+        - Plans
+      summary: List participant plans
+      operationId: getPlans
+      description: Lists the participant plans configured by the authenticated company. Administrator access is required.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Plans returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Administrator access is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /plans/{plan_id}:
+    get:
+      tags:
+        - Plans
+      summary: Get participant plan
+      operationId: getPlan
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: plan_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Plan returned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  status:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      plan:
+                        $ref: '#/components/schemas/Plan'
+        '404':
+          description: Plan not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /subscriptions:
+    get:
+      tags:
+        - Subscriptions
+      summary: List participant subscriptions
+      operationId: getSubscriptions
+      description: Lists participant plan access records. By default, customers without a subscription history are omitted. Administrator access is required.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, past_due, expired, cancelled, none]
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: per_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Subscriptions returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionListResponse'
+        '403':
+          description: Administrator access is required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /subscriptions/{customer_id}:
+    get:
+      tags:
+        - Subscriptions
+      summary: Get a participant subscription
+      operationId: getSubscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Subscription returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionResponse'
+        '404':
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags:
+        - Subscriptions
+      summary: Manage participant plan access
+      operationId: patchSubscription
+      description: |
+        Activates, marks past due, cancels, or clears a participant's plan access in Smartbis. This endpoint manages
+        entitlement only. It does not create charges, refund payments, or cancel subscriptions in Stripe, Mercado Pago,
+        or another payment gateway. Administrator access is required.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManageSubscriptionRequest'
+      responses:
+        '200':
+          description: Subscription access updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManageSubscriptionResponse'
+        '404':
+          description: Customer or active plan not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Invalid subscription transition or field
           content:
             application/json:
               schema:
@@ -336,6 +630,8 @@ paths:
         authorized store.
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -487,6 +783,8 @@ paths:
         other request field/header to override the resolved store.
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -586,6 +884,7 @@ paths:
           schema:
             type: integer
             example: 123456
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -686,6 +985,7 @@ paths:
           schema:
             type: integer
             minimum: 1
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -756,6 +1056,7 @@ paths:
           schema:
             type: integer
             minimum: 1
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -855,6 +1156,8 @@ paths:
       description: Administrator-only operation.
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -972,6 +1275,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
           description: Successful response
@@ -1017,12 +1321,164 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhook endpoints
+      operationId: getWebhooks
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Webhook endpoints returned, content: {application/json: {schema: {$ref: '#/components/schemas/WebhookListResponse'}}}}
+        '403': {description: Administrator scope required, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    post:
+      tags: [Webhooks]
+      summary: Create a webhook endpoint
+      operationId: postWebhook
+      description: Creates an HTTPS endpoint. The signing secret is returned once and stored encrypted by Smartbis.
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WebhookCreateRequest'}
+      responses:
+        '201': {description: Webhook created, content: {application/json: {schema: {$ref: '#/components/schemas/WebhookCreateResponse'}}}}
+        '422': {description: Invalid URL or event, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /webhooks/deliveries:
+    get:
+      tags: [Webhooks]
+      summary: List webhook delivery attempts
+      operationId: getWebhookDeliveries
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: per_page, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        '200': {description: Delivery audit returned, content: {application/json: {schema: {$ref: '#/components/schemas/WebhookDeliveryListResponse'}}}}
+  /webhooks/{webhook_id}:
+    patch:
+      tags: [Webhooks]
+      summary: Update, deactivate, or rotate a webhook endpoint
+      operationId: patchWebhook
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: webhook_id, in: path, required: true, schema: {type: integer, minimum: 1}}
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: {type: string, format: uri, pattern: '^https://'}
+                events: {type: array, minItems: 1, uniqueItems: true, items: {type: string, enum: [subscription.activated, subscription.past_due, subscription.expired, subscription.cancelled]}}
+                active: {type: boolean}
+                rotate_secret: {type: boolean}
+      responses:
+        '200': {description: Webhook updated; signing_secret is returned only when rotated, content: {application/json: {schema: {$ref: '#/components/schemas/WebhookCreateResponse'}}}}
+        '404': {description: Webhook not found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /eligibility/history:
+    get:
+      tags: [Eligibility]
+      summary: List eligibility change history
+      operationId: getEligibilityHistory
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: beneficiary_type, in: query, schema: {type: string, enum: [holder, dependent]}}
+        - {name: beneficiary_id, in: query, schema: {type: integer, minimum: 1}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: per_page, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      responses:
+        '200': {description: Eligibility history returned, content: {application/json: {schema: {$ref: '#/components/schemas/EligibilityHistoryListResponse'}}}}
+  /beneficiaries/{beneficiary_type}/{beneficiary_id}/providers/{provider_key}:
+    parameters:
+      - {name: beneficiary_type, in: path, required: true, schema: {type: string, enum: [holder, dependent]}}
+      - {name: beneficiary_id, in: path, required: true, schema: {type: integer, minimum: 1}}
+      - {name: provider_key, in: path, required: true, schema: {type: string, pattern: '^[A-Za-z0-9._-]{2,100}$'}}
+    get:
+      tags: [Providers]
+      summary: Get an external beneficiary identifier
+      operationId: getBeneficiaryProvider
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Provider link returned, content: {application/json: {schema: {$ref: '#/components/schemas/ProviderLinkResponse'}}}}
+        '404': {description: Beneficiary or provider link not found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    put:
+      tags: [Providers]
+      summary: Create or update an external beneficiary identifier
+      operationId: putBeneficiaryProvider
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                external_beneficiary_id: {type: string, maxLength: 255}
+              required: [external_beneficiary_id]
+      responses:
+        '200': {description: Provider link saved, content: {application/json: {schema: {$ref: '#/components/schemas/ProviderLinkResponse'}}}}
+        '409': {description: External identifier conflict, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /access-links:
+    post:
+      tags: [Access Links]
+      summary: Issue a short-lived, single-use access token
+      operationId: postAccessLink
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccessLinkRequest'}
+      responses:
+        '201': {description: Access token issued, content: {application/json: {schema: {$ref: '#/components/schemas/AccessLinkResponse'}}}}
+        '409': {description: Provider link must be configured first, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /access-links/consume:
+    post:
+      tags: [Access Links]
+      summary: Consume a single-use access token
+      operationId: postConsumeAccessLink
+      description: Public exchange endpoint authenticated by the signed, expiring, single-use token itself.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                access_token: {type: string}
+              required: [access_token]
+      responses:
+        '200': {description: Access token consumed, content: {application/json: {schema: {$ref: '#/components/schemas/AccessLinkConsumeResponse'}}}}
+        '401': {description: Invalid or expired signature, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '409': {description: Token already used or expired, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: opaque
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Unique key for this logical write (8 to 128 letters, digits, dot, underscore, colon, or hyphen).
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
   schemas:
     Error:
       type: object
@@ -1042,11 +1498,369 @@ components:
         message:
           type: string
           example: Forbidden
+        request_id:
+          type: string
+          example: 879c2e5f32fe9a8bdd07845a
+        error:
+          type: object
+          properties:
+            type: {type: string, example: forbidden}
+            message: {type: string, example: Forbidden}
       required:
         - code
         - status
         - data
         - message
+    DependentEligibility:
+      type: object
+      properties:
+        status: {type: string, enum: [active, past_due, expired, cancelled, none]}
+        inherited_from_holder: {type: boolean, example: true}
+        holder_customer_id: {type: integer}
+        status_changed_at: {type: string, nullable: true}
+      required: [status, inherited_from_holder, holder_customer_id]
+    Dependent:
+      type: object
+      properties:
+        dependent_id: {type: integer}
+        holder_customer_id: {type: integer}
+        name: {type: string}
+        document: {type: string}
+        phone: {type: string}
+        birth_date: {type: string, format: date, nullable: true}
+        identity_document: {type: string}
+        country: {type: string}
+        eligibility: {$ref: '#/components/schemas/DependentEligibility'}
+      required: [dependent_id, holder_customer_id, name, document, eligibility]
+    DependentWrite:
+      type: object
+      properties:
+        name: {type: string}
+        document: {type: string}
+        phone: {type: string}
+        birth_date: {type: string, format: date}
+        identity_document: {type: string}
+        country: {type: string}
+      required: [name, document]
+    DependentUpdate:
+      type: object
+      properties:
+        name: {type: string}
+        phone: {type: string}
+        birth_date: {type: string, format: date}
+        identity_document: {type: string}
+        country: {type: string}
+    DependentResponse:
+      type: object
+      properties:
+        code: {type: integer}
+        status: {type: string}
+        request_id: {type: string}
+        data:
+          type: object
+          properties:
+            dependent: {$ref: '#/components/schemas/Dependent'}
+      required: [code, status, data]
+    ActiveLife:
+      type: object
+      properties:
+        beneficiary_type: {type: string, enum: [holder, dependent]}
+        beneficiary_id: {type: integer}
+        holder_customer_id: {type: integer}
+        name: {type: string}
+        document: {type: string}
+        plan_id: {type: integer}
+        status: {type: string, enum: [active]}
+        status_changed_at: {type: string, nullable: true}
+      required: [beneficiary_type, beneficiary_id, holder_customer_id, name, plan_id, status]
+    ReconciliationResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        request_id: {type: string}
+        data:
+          type: object
+          properties:
+            total: {type: integer}
+            page: {type: integer}
+            per_page: {type: integer}
+            total_pages: {type: integer}
+            items: {type: array, items: {$ref: '#/components/schemas/ActiveLife'}}
+      required: [code, status, data]
+    WebhookEndpoint:
+      type: object
+      properties:
+        webhook_id: {type: integer}
+        url: {type: string, format: uri}
+        events: {type: array, items: {type: string, enum: [subscription.activated, subscription.past_due, subscription.expired, subscription.cancelled]}}
+        active: {type: boolean}
+        created_at: {type: string}
+        updated_at: {type: string}
+      required: [webhook_id, url, events, active]
+    WebhookCreateRequest:
+      type: object
+      properties:
+        url: {type: string, format: uri, pattern: '^https://'}
+        events: {type: array, minItems: 1, uniqueItems: true, items: {type: string, enum: [subscription.activated, subscription.past_due, subscription.expired, subscription.cancelled]}}
+      required: [url, events]
+    WebhookCreateResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 201}
+        status: {type: string, example: success}
+        data:
+          allOf:
+            - $ref: '#/components/schemas/WebhookEndpoint'
+            - type: object
+              properties:
+                signing_secret: {type: string, description: Returned only once.}
+      required: [code, status, data]
+    WebhookListResponse:
+      type: object
+      properties:
+        code: {type: integer}
+        status: {type: string}
+        data:
+          type: object
+          properties:
+            total: {type: integer}
+            items: {type: array, items: {$ref: '#/components/schemas/WebhookEndpoint'}}
+      required: [code, status, data]
+    WebhookDelivery:
+      type: object
+      properties:
+        delivery_id: {type: integer}
+        webhook_id: {type: integer}
+        event_id: {type: string, format: uuid}
+        event_type: {type: string}
+        attempt_count: {type: integer}
+        next_attempt_at: {type: string, nullable: true}
+        delivered_at: {type: string, nullable: true}
+        last_http_status: {type: integer, nullable: true}
+        last_error: {type: string, nullable: true}
+        created_at: {type: string}
+    WebhookDeliveryListResponse:
+      type: object
+      properties:
+        code: {type: integer}
+        status: {type: string}
+        data:
+          type: object
+          properties:
+            total: {type: integer}
+            page: {type: integer}
+            per_page: {type: integer}
+            total_pages: {type: integer}
+            items: {type: array, items: {$ref: '#/components/schemas/WebhookDelivery'}}
+    EligibilityHistory:
+      type: object
+      properties:
+        history_id: {type: integer}
+        beneficiary_type: {type: string, enum: [holder, dependent]}
+        beneficiary_id: {type: integer}
+        previous_status: {type: string}
+        new_status: {type: string}
+        reason: {type: string, nullable: true}
+        external_reference: {type: string, nullable: true}
+        operator_id: {type: integer}
+        changed_at: {type: string}
+    EligibilityHistoryListResponse:
+      type: object
+      properties:
+        code: {type: integer}
+        status: {type: string}
+        data:
+          type: object
+          properties:
+            total: {type: integer}
+            page: {type: integer}
+            per_page: {type: integer}
+            total_pages: {type: integer}
+            items: {type: array, items: {$ref: '#/components/schemas/EligibilityHistory'}}
+    ProviderLinkResponse:
+      type: object
+      properties:
+        code: {type: integer}
+        status: {type: string}
+        data:
+          type: object
+          properties:
+            beneficiary_type: {type: string, enum: [holder, dependent]}
+            beneficiary_id: {type: integer}
+            provider_key: {type: string}
+            external_beneficiary_id: {type: string}
+      required: [code, status, data]
+    AccessLinkRequest:
+      type: object
+      properties:
+        beneficiary_type: {type: string, enum: [holder, dependent]}
+        beneficiary_id: {type: integer, minimum: 1}
+        provider_key: {type: string}
+        expires_in: {type: integer, minimum: 60, maximum: 900, default: 300}
+      required: [beneficiary_type, beneficiary_id, provider_key]
+    AccessLinkResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 201}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            access_token: {type: string}
+            token_type: {type: string, enum: [one_time]}
+            expires_in: {type: integer}
+            expires_at: {type: string, format: date-time}
+      required: [code, status, data]
+    AccessLinkConsumeResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            beneficiary_type: {type: string, enum: [holder, dependent]}
+            beneficiary_id: {type: integer}
+            provider_key: {type: string}
+            external_beneficiary_id: {type: string, nullable: true}
+            consumed_at: {type: string}
+      required: [code, status, data]
+    Plan:
+      type: object
+      properties:
+        plan_id:
+          type: integer
+          example: 12
+        name:
+          type: string
+          example: Telemedicina Individual
+        description:
+          type: string
+        type:
+          type: integer
+        setup_fee:
+          type: number
+          format: float
+          example: 0
+        prices:
+          type: object
+          properties:
+            monthly: {type: number, format: float}
+            semiannual: {type: number, format: float}
+            annual: {type: number, format: float}
+            lifetime: {type: number, format: float}
+        active:
+          type: integer
+          enum: [0, 1]
+      required: [plan_id, name, type, setup_fee, prices, active]
+    PlanListResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            total: {type: integer}
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Plan'
+      required: [code, status, data]
+    Subscription:
+      type: object
+      properties:
+        customer_id: {type: integer}
+        customer_name: {type: string}
+        document: {type: string}
+        phone: {type: string}
+        plan_id: {type: integer, nullable: true}
+        plan_name: {type: string, nullable: true}
+        status:
+          type: string
+          enum: [active, past_due, expired, cancelled, none]
+        renewal_period_months:
+          type: integer
+          nullable: true
+          enum: [0, 1, 6, 12]
+        amount: {type: number, format: float, nullable: true}
+        payment_method:
+          type: string
+          nullable: true
+          enum: [pix, card, bank_slip]
+        contract_until: {type: string, nullable: true, example: '2027-09-24'}
+        status_changed_at: {type: string, nullable: true}
+        customer_active: {type: integer, enum: [0, 1]}
+      required: [customer_id, customer_name, status, customer_active]
+    SubscriptionResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            subscription:
+              $ref: '#/components/schemas/Subscription'
+      required: [code, status, data]
+    SubscriptionListResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            total: {type: integer}
+            page: {type: integer}
+            per_page: {type: integer}
+            total_pages: {type: integer}
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Subscription'
+      required: [code, status, data]
+    ManageSubscriptionRequest:
+      type: object
+      description: plan_id and renewal_period_months are required when status is active. contract_until is also required for renewable plans and may be omitted for a lifetime plan (renewal_period_months = 0).
+      properties:
+        status:
+          type: string
+          enum: [active, past_due, cancelled, none]
+        plan_id: {type: integer}
+        renewal_period_months: {type: integer, enum: [0, 1, 6, 12]}
+        amount: {type: number, format: float, minimum: 0}
+        payment_method: {type: string, enum: [pix, card, bank_slip]}
+        contract_until: {type: string, format: date}
+        reason: {type: string, maxLength: 255}
+        external_reference: {type: string, maxLength: 255}
+      required: [status]
+    ManageSubscriptionResponse:
+      type: object
+      properties:
+        code: {type: integer, example: 200}
+        status: {type: string, example: success}
+        data:
+          type: object
+          properties:
+            subscription:
+              $ref: '#/components/schemas/Subscription'
+            billing_managed: {type: boolean, example: false}
+            event:
+              type: object
+              nullable: true
+              description: Event queued atomically with the eligibility history when the status changes.
+              properties:
+                type:
+                  type: string
+                  enum: [subscription.activated, subscription.past_due, subscription.cancelled]
+                delivery_status: {type: string, enum: [queued, no_subscribers]}
+                queued_deliveries: {type: integer, minimum: 0}
+        message:
+          type: string
+          example: Subscription access updated successfully; billing gateways were not changed
+      required: [code, status, data, message]
     Customer:
       type: object
       properties:
